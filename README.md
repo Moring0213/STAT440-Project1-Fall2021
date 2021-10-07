@@ -14,8 +14,8 @@ Wenshu Liao(301326083)
 
 ## Project_1.Rmd
 
-This code file for project. There also provide THML format.
+This code file for project. There also provide HTML format.
 
 ## Project_1_ch.Rmd
 
-This code file for challenge questions. There also provide THML format.
+This code file for challenge questions. There also provide HTML format.
