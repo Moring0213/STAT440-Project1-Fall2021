@@ -11,3 +11,11 @@ Mengying Yuan (301353249)
 Haonan Yan(301326710)
 
 Wenshu Liao(301326083)
+
+## Project_1.Rmd
+
+This code file for project. There also provide THML format.
+
+## Project_1_ch.Rmd
+
+This code file for challenge questions. There also provide THML format.
