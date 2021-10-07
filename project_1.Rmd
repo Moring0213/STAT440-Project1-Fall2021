@@ -1,0 +1,201 @@
+---
+title: "Project1"
+output: html_document
+---
+## import data frame
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(tibbletime)
+library(zoo)
+library(randomForest)
+
+Cases = read_excel("BC COVID CASES.xlsx","Cases")
+Wastewater = read_excel("BC COVID CASES.xlsx","Wastewater")
+```
+
+pf is predict file 
+```{r}
+
+pf = read.csv("predictions.csv")
+colnames(pf)[1] = "Date:Delay"
+pf1 = pf
+pf2 = pf
+pf3 = pf
+
+Cases$Date = as.Date(Cases$Date)
+Cases$Date = ymd(Cases$Date)
+Wastewater$Date = ymd(Wastewater$Date)
+
+```
+
+# clean data 
+spread the plant and let date become daily replace weekly
+use na.locf function fill forward the empty space
+```{r}
+Wastewaterdaily = Wastewater %>% spread(key = Plant,value = Count) %>% group_by() %>%
+  right_join(tibble(Date = seq(as_date("2020-05-10"), as_date("2021-08-28"), by="day")),by="Date")  %>%
+  arrange(Date) %>%  na.locf(na.rm=FALSE)
+
+
+d1 = min(c(Cases$Date,Wastewaterdaily$Date))
+d2 = max(c(Cases$Date,Wastewaterdaily$Date))
+# Make range of dates under consideration.
+
+dates = seq(d1, d2, by = 'days')
+```
+
+Dataframe to use for join.
+```{r}
+df = data.frame(Date = dates)
+df = merge(x = df, y = Cases, by = "Date", all.x = TRUE)
+df = merge(x = df, y = Wastewaterdaily, by = "Date", all.x = TRUE)
+
+df[,c(3,4,5,6,7,8,13)] = df[,c(3,4,5,6,7,8,13)] %>% na.locf(na.rm=FALSE)
+```
+
+We fill in missing data with zero.
+This does not violate the temporal assumptions.
+That's because 0 is a constant uninformed from future data.
+```{r}
+df[is.na(df)] = 0
+```
+
+# Modeling
+
+1 fill forward
+```{r}
+f1 = function(Xp, t, d) {
+  
+  # This is our X -> Y (not used for fill forward).
+  
+  X = Xp
+  Y = c(Xp[-(1:d), 2], rep(NA, d))
+  
+  y = Xp[dim(Xp)[1], 2]
+  return(unname(y))
+}
+```
+
+2 linear interpolation
+```{r}
+f2 = function(Xp, t, d) {
+  
+  # This is our X -> Y (not used for fill forward).
+  
+  X = Xp
+  Y = c(Xp[-(1:d), 2], rep(NA, d))
+  
+  k = 19
+  X = tail(X,k)
+  Y = tail(Y,k)
+  
+  
+  # Let's do a regression against row numbers.
+  
+  
+  n = dim(X)[1] - d
+  x = 1:n
+  y = Y[1:n]
+  model = lm(y ~ x)
+  
+  # & Interpolate.
+  
+  y = predict(model, new = data.frame(x = c(n + d)))
+  return(unname(y))
+}
+
+```
+
+3 random forests
+```{r}
+f3 = function(Xp, t, d) {
+ 
+  # This is our X -> Y (not used for fill forward).
+  X = Xp
+  Y = c(Xp[-(1:d), 2], rep(NA, d))
+  
+  dim(Xp)[1]
+  n = dim(Xp)[1] - d
+  Xtrain = X[1:n,]
+  Xtest = X[(n+1):dim(Xp)[1],]
+  Ytrain = Y[1:n]
+  Ytest = Y[(n+1):dim(Xp)[1]]
+  Xtrain$Date = 1:n
+  Xtest$Date = (n+1):dim(Xp)[1]
+  
+  
+  # Lets do random forests
+  
+  model = randomForest(as.matrix(Xtrain),as.factor(Ytrain))
+  solution = predict(model, as.matrix(Xtest))
+  solution = as.numeric(as.vector(solution))
+  
+  y = solution[d]
+  return(y)
+}
+
+```
+
+# backtesting 
+We loop through each row of the prediction file
+```{r}
+for (i in 1:dim(pf)[1]) {
+  
+  # We extract t and d.
+  
+  result = str_split(pf[i, 1], ':')
+  t = ymd(result[[1]][1])
+  d = as.numeric(result[[1]][2])
+  
+  # Compute X' given t and d.
+  
+  Xp = df[df[, 1] <= t - d, ]
+  
+  # Make a prediction.
+  
+  y1 = f1(Xp, t, d)
+  y2 = f2(Xp, t, d)
+  y3 = f3(Xp, t, d)
+  
+  # Modify our prediction data frame to reflect this prediction.
+  
+  pf1[i, 2] = y1
+  pf2[i, 2] = y2
+  pf3[i, 2] = y3
+}
+
+```
+
+check RMSE
+```{r}
+Check_RMSE = function(df,pf){
+  
+  RMSE_1 = sqrt(mean((df[c(65:579),2]-pf[c(1:515),2])^2))
+  RMSE_3 = sqrt(mean((df[c(65:579),2]-pf[c(516:1030),2])^2))
+  RMSE_5 = sqrt(mean((df[c(65:579),2]-pf[c(1031:1545),2])^2))
+  RMSE_7 = sqrt(mean((df[c(65:579),2]-pf[c(1546:2060),2])^2))
+  RMSE_Ave = (RMSE_1 + RMSE_3 + RMSE_5 + RMSE_7)/4
+  return(RMSE_Ave)
+}
+RMSE1 = Check_RMSE(df,pf1)
+RMSE2 = Check_RMSE(df,pf2)
+RMSE3 = Check_RMSE(df,pf3)
+RMSE1
+RMSE2
+RMSE3
+#a little bit different with kaggle, 7 less then kaggle 
+
+```
+
+Write our predictions out.
+```{r}
+write.table(pf1, file = 'project_1_m.csv', sep = ',', quote = F, row.names = F)
+write.table(pf2, file = 'project_2_m.csv', sep = ',', quote = F, row.names = F)
+write.table(pf3, file = 'project_3_m.csv', sep = ',', quote = F, row.names = F)
+
+```
